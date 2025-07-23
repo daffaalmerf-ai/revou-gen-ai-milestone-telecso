@@ -1,0 +1,22 @@
+credentials:
+  usernames:
+    primaya:
+      email: primaya@testing.com
+      name: 40 PRIMAYA, RS
+      password: "$2b$12$5/hLuib2MLsXy4WWj2XOD.ruqSUVuRE67z9nEo2qaDbTfwfU0dtmG"
+    ekahospital:
+      email: eka@testing.com
+      name: 34 EKA HOSPITAL BEKASI
+      password: "$2b$12$5/hLuib2MLsXy4WWj2XOD.ruqSUVuRE67z9nEo2qaDbTfwfU0dtmG"
+    gama:
+      email: gama@testing.com
+      name: 43 GAMA / A. YANI, APT
+      password: "$2b$12$5/hLuib2MLsXy4WWj2XOD.ruqSUVuRE67z9nEo2qaDbTfwfU0dtmG"
+    rspi:
+      email: rspi@testing.com
+      name: 30 PONDOK INDAH, RS.
+      password: "$2b$12$5/hLuib2MLsXy4WWj2XOD.ruqSUVuRE67z9nEo2qaDbTfwfU0dtmG"
+cookie:
+  expiry_days: 90
+  key: FLyMxGlmPmCQIGy
+  name: cookie_milestone1
