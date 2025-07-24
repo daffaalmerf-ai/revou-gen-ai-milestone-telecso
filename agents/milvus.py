@@ -1,17 +1,15 @@
-import os
+from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain_core.tools import tool
-from langgraph.graph import MessagesState, StateGraph
 from langchain_core.messages import SystemMessage
-from langgraph.prebuilt import ToolNode
-from langgraph.graph import END
+from langchain_core.documents import Document
+from langgraph.graph import MessagesState, StateGraph, END
 from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_milvus import Milvus
 from langchain_openai import OpenAIEmbeddings
-from dotenv import load_dotenv
-from langchain_core.documents import Document
 
-from dotenv import load_dotenv
+import os
+
 load_dotenv(override=True)
 
 model = init_chat_model("gpt-4.1-mini", model_provider="openai")
