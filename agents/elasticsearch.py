@@ -5,6 +5,7 @@ from langchain_core.messages import SystemMessage
 from langgraph.prebuilt import ToolNode
 from langgraph.graph import END
 from langgraph.prebuilt import ToolNode, tools_condition
+from typing import List
 
 import os
 import json
@@ -16,36 +17,38 @@ load_dotenv(override=True)
 llm = init_chat_model("gpt-4.1-mini", model_provider="openai")
 
 @tool("query_product_elasticsearch", parse_docstring=True)
-def query_product_elasticsearch(product_name: str):
+def query_product_elasticsearch(product_names: List[str]):
     """
     Search for similar product names using Elasticsearch and return the top match and score.
 
     Args:
-        product_name: Name or partial name of the product provided by the customer.
+        product_names: List of names or partial names of the product provided by the customer.
 
     Returns:
         Array of products with _index, _type, _id, _score, and _source. Possible to return
         empty array.
     """
-    url = os.environ["ELASTIC_URL"].rstrip("/") + "/_search"
-    auth = (os.environ["ELASTIC_USERNAME"], os.environ["ELASTIC_PASSWORD"])
+    hits_results = []
+    for product_name in product_names:
+        url = os.environ["ELASTIC_URL"].rstrip("/") + "/_search"
+        auth = (os.environ["ELASTIC_USERNAME"], os.environ["ELASTIC_PASSWORD"])
 
-    query_elastic = {
-        "query": {
-            "dis_max": {
-                "queries": [
-                    {"match": {"name": {"query": product_name}}},
-                    {"match": {"name_autocomplete": {"query": product_name}}},
-                    {"match": {"name_synonym": {"query": product_name}}}
-                ]
+        query_elastic = {
+            "query": {
+                "dis_max": {
+                    "queries": [
+                        {"match": {"name": {"query": product_name}}},
+                        {"match": {"name_autocomplete": {"query": product_name}}},
+                        {"match": {"name_synonym": {"query": product_name}}}
+                    ]
+                }
             }
         }
-    }
-
-    response = requests.get(url, auth=auth, json=query_elastic)
-    response.raise_for_status()
-    hits = json.dumps(response.json().get("hits", {}).get("hits", []))
-    return hits
+        response = requests.get(url, auth=auth, json=query_elastic)
+        response.raise_for_status()
+        hits = json.dumps(response.json().get("hits", {}).get("hits", []))
+        hits_results.append({product_name: hits})
+    return hits_results
 
 def query_or_respond_elastic(state: MessagesState):
     """Generate tool call for retrieval or respond."""
@@ -82,6 +85,8 @@ def generate_elastic_code(state: MessagesState):
         "- Tride Tablet 5000 unit (vitamin D) → TRIDE 5000IU BOX 10 STR @ 6 KAP\n"
         "- Tensivask Tablet 5 MG (amlodipine) → TENSIVASK 5MG @50\n"
         "- (G) REG 3 PROPRANOLOL TABLET 10 MG DEXA → PROPRANOLOL 10MG @100(DX)\n\n"
+    
+        "Store the results in the same manner of product key-value pair {product_name}:{best_match_product_name}"
     
         f"Elasticsearch results:\n{docs_content}\n"
     )

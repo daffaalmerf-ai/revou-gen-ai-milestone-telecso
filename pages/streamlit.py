@@ -36,6 +36,10 @@ if "customer_id_ref_mapping" not in st.session_state:
 
 if "customer_id_ref" not in st.session_state:
     st.session_state["customer_id_ref"] = None
+if "chat_memory" not in st.session_state:
+    st.session_state["chat_memory"] = dict()
+if "chat_history" not in st.session_state:
+    st.session_state["chat_history"] = dict()
 
 model = init_chat_model("gpt-4.1-mini", model_provider= "openai")
 
@@ -64,6 +68,7 @@ class BestAgent(BaseModel):
 class SupervisorState(MessagesState):
     user_question: str
     customer_id_ref: int
+    oracle_found: bool
 
 def supervisor(state: SupervisorState) -> Command[Literal["OracleAgent", "ElasticAgent", "MilvusAgent", END]]:
     last_message = state["messages"][-1]
@@ -71,9 +76,8 @@ def supervisor(state: SupervisorState) -> Command[Literal["OracleAgent", "Elasti
     instruction = [SystemMessage(content=f"""
         You are an intelligent assistant tasked with routing user queries to the appropriate agent. Based on the user's last message and the previous agent's response, determine the next action.
         Rules:
-        - If the user's question is related to **product recommendations**, based on similarity, delegate to the **MilvusAgent**.
-        - If the user's question is about **product details** (e.g., product code, description, usage, etc.), delegate to the **OracleAgent**.
-        - If the user's question is related to **price or stock availability**, delegate to the **OracleAgent** agent to query structured data (e.g., price, stock).
+        - If the user's question is related to **product recommendations** based on similarity or product details strictly related to description, indication, usage, how to use, dosage, and side effects, delegate to the **MilvusAgent**.
+        - If the user's question is about **price or stock availability**, delegate to the **OracleAgent**.
         - If the **OracleAgent** fails to return the desired product, use **ElasticAgent** as a fallback to try and fetch the appropriate product.
         - If a sufficient and complete answer has already been provided, you may choose to **END** the conversation.
         - Ensure to always prioritize user clarity, provide concise, relevant information, and maintain a friendly, professional tone.
@@ -95,8 +99,8 @@ def callOracleAgent(state: SupervisorState) -> Command[Literal['supervisor']]:
     response = OracleAgent.graph.invoke({"messages":[HumanMessage(content=json.dumps({
             "user_question": prompt,
             "db_config": DB_CONFIG_ORACLE,
-            "customer_id_reference": customer_id_ref
-        }))], "db_config": DB_CONFIG_ORACLE, "user_question" : prompt, "customer_id_reference": customer_id_ref})
+            "customer_id_reference": customer_id_ref,
+        }))], "db_config": DB_CONFIG_ORACLE, "user_question" : prompt, "customer_id_reference": customer_id_ref, "fallback_elastic": False})
     return Command(
         goto=END,
         update={"messages": response['messages'][-1]}
@@ -131,23 +135,46 @@ def build_agent():
     )
     return memory, supervisor_agent
 
+memory = None
+supervisor_agent = None
+
 if st.session_state["authentication_status"]:
     authenticator.logout('logout')
     st.title("AAM Customer Service (TeleCSO)")
     st.write(f'Welcome *{st.session_state["name"]}*')
     if st.session_state["name"] in st.session_state["customer_id_ref_mapping"]:
-        st.session_state['customer_id_ref'] = st.session_state["customer_id_ref_mapping"][st.session_state["name"]]
+        customer_id_ref = st.session_state["customer_id_ref_mapping"][st.session_state["name"]]
+        st.session_state["customer_id_ref"] = customer_id_ref
+        if customer_id_ref not in st.session_state["chat_history"].keys():
+            st.session_state["chat_history"][customer_id_ref] = []
+        if customer_id_ref not in st.session_state["chat_memory"].keys():
+            st.session_state["chat_memory"][customer_id_ref] = dict()
+            memory, supervisor_agent = build_agent()
+            st.session_state["chat_memory"][customer_id_ref]["memory"] = memory
+            st.session_state["chat_memory"][customer_id_ref]["agent"] = supervisor_agent
+        else:
+            memory = st.session_state["chat_memory"][st.session_state["customer_id_ref"]]["memory"]
+            supervisor_agent = st.session_state["chat_memory"][st.session_state["customer_id_ref"]]["agent"]
 
     config = {"configurable": {"thread_id": st.session_state['customer_id_ref']}}
-    memory, supervisor_agent = build_agent()
 
-    prompt = st.chat_input("Write your question here ... ")
-    if prompt:
+    curr_chat_history = st.session_state["chat_history"][st.session_state['customer_id_ref']]
+
+    if curr_chat_history:
+        for chat in curr_chat_history:
+            with st.chat_message("human"):
+                st.markdown(chat["question"])
+            with st.chat_message("ai"):
+                st.markdown(chat["answer"])
+
+    prompt = st.chat_input("Write your question here ... ", accept_file=True,
+                           file_type=["png", "jpg", "jpeg"],)
+    if prompt and prompt.text:
         question = ""
         answer = ""
         with st.chat_message("human"):
-            st.markdown(prompt)
-            question = prompt
+            st.markdown(prompt.text)
+            question = prompt.text
 
         final_answer = ""
         with st.chat_message("ai"):
@@ -156,17 +183,33 @@ if st.session_state["authentication_status"]:
             answer_placeholder = st.empty()
             status_placeholder.status(label="Process Start")
             state = "Process Start"
-            for chunk, metadata in supervisor_agent.stream({"messages":HumanMessage(content=prompt), "customer_id_ref": st.session_state["customer_id_ref"]}, stream_mode="messages", config=config):
+
+            prior_state = st.session_state["chat_memory"][customer_id_ref]["memory"]
+            prior_messages = []
+
+            # for prior_message in st.session_state["chat_history"][customer_id_ref]:
+            #     prior_messages.append(HumanMessage(content=prior_message["question"]))
+            #     prior_messages.append(AIMessage(content=prior_message["answer"]))
+            
+            # new_input = {
+            #     "messages": prior_messages + [HumanMessage(content=prompt.text)],
+            #     "customer_id_ref": customer_id_ref
+            # }
+        
+            for chunk, metadata in supervisor_agent.stream({"messages": [HumanMessage(content=prompt.text)], "customer_id_ref": customer_id_ref}, stream_mode="messages", config=config):
                 if metadata['langgraph_node'] != state:
                     status_placeholder.status(label=metadata['langgraph_node'])
                     state = metadata['langgraph_node']
                     final_answer = ""
-            
-                if metadata['langgraph_node'] == "generate_elastic_code" or metadata['langgraph_node'] == 'generate_similar_product' or metadata['langgraph_node'] == 'final_answer':
+                if metadata['langgraph_node'] == "generate_elastic_code" or metadata['langgraph_node'] == 'generate_similar_product' or metadata['langgraph_node'] == 'final_answer' or metadata['langgraph_node'] == 'query_or_respond_similar_product':
                     final_answer += chunk.content
                     answer_placeholder.markdown(final_answer)
         answer = final_answer
         status_placeholder.status(label="Complete", state='complete')
+        
+        curr_chat_history.append({ "question": question, "answer": answer })
+        st.rerun()
+
 elif st.session_state["authentication_status"] == False:
     st.error('Username/password is incorrect')
 elif st.session_state["authentication_status"] == None:

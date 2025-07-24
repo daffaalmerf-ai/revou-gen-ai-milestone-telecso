@@ -58,41 +58,49 @@ def generate_similar_product(state: MessagesState):
     """Generate answer."""
     recent_tool_messages = []
     for message in reversed(state["messages"]):
-        print(message)
         if message.type == "tool":
             recent_tool_messages.append(message)
         else:
             break
     tool_messages = recent_tool_messages[::-1]
 
-    docs_content = "\n\n".join(
-        doc.page_content
-        for m in tool_messages
-        if hasattr(m, "artifact") and isinstance(m.artifact, list)
-        for doc in m.artifact
-        if isinstance(doc, Document)
-    )
+    response = None
 
-    system_message_content = (
-        "You are a Customer Service Officer (CSO) assigned to recommend similar products based on a given product."
-        "You have access to detailed information for each product, including its description, indication, usage, dosage, and side effects."
-        "If any of these fields are missing (e.g., contain NaN), reduce the confidence score of the recommendation."
-        "If no sufficiently similar product is found, respond with 'Maaf, saya belum bisa menemukan produk serupa untuk saat ini.'"
-        "Your response must be concise, and for each recommended product, provide a brief description for each of them."
-        "Use a natural and polite tone in your response."
-        "\n\n"
-        f"{docs_content}"
-    )
+    if len(tool_messages) > 0 and len(tool_messages[-1].content):
 
-    conversation_messages = [
-        message
-        for message in state["messages"]
-        if message.type in ("human", "system")
-        or (message.type == "ai" and not message.tool_calls)
-    ]
-    prompt = [SystemMessage(system_message_content)] + conversation_messages
+        docs_content = "\n\n".join(
+            doc.page_content
+            for m in tool_messages
+            if hasattr(m, "artifact") and isinstance(m.artifact, list)
+            for doc in m.artifact
+            if isinstance(doc, Document)
+        )
 
-    response = model.invoke(prompt)
+        system_message_content = (
+            "You are a Customer Service Officer (CSO) assigned to recommend similar products based on a given product."
+            "You have access to detailed information for each product, including its description, indication, usage, how to use, dosage, and side effects."
+            "If any of these fields are missing (e.g., contain NaN), reduce the confidence score of the recommendation."
+            "If no sufficiently similar product is found, respond with 'Maaf, saya belum bisa menemukan produk serupa untuk saat ini.'"
+            "Your response must be concise, and for each recommended product, provide a brief description for each of them."
+            "Use a natural and polite tone in your response."
+            "\n\n"
+            "Use the following docs:"
+            f"{docs_content}"
+        )
+
+        conversation_messages = [
+            message
+            for message in state["messages"]
+            if message.type in ("human", "system")
+            or (message.type == "ai" and not message.tool_calls)
+        ]
+
+        prompt = [SystemMessage(system_message_content)] + conversation_messages
+
+        response = model.invoke(prompt)
+
+    else:
+        response = state["messages"][-1]
 
     return {"messages": [response]}
 
