@@ -16,6 +16,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langchain.chat_models import init_chat_model
 import json
 import base64
+from guardrails.hub import RestrictToTopic
+from guardrails import Guard
 
 from dotenv import load_dotenv
 load_dotenv(override=True)
@@ -72,6 +74,20 @@ class SupervisorState(MessagesState):
     customer_id_ref: int
     oracle_found: bool
 
+guard = Guard().use(
+    RestrictToTopic(
+        valid_topics=["products", "orders", "invoices", "stock"],
+        invalid_topics=[
+            "privacy", "other users", "other customers' purchases",
+            "crime", "criminal activity", "theft", "fraud",
+            "drug misuse", "illegal drugs", "narcotics", "drug abuse", "misuse of drugs"
+        ],
+        disable_classifier=True,
+        disable_llm=False,
+        on_fail="exception"
+    )
+)
+
 def supervisor(state: SupervisorState) -> Command[Literal["OracleAgent", "ElasticAgent", "MilvusAgent", END]]:
     last_message = state["messages"][-1]
     customer_id_ref = state["customer_id_ref"]
@@ -96,33 +112,51 @@ def supervisor(state: SupervisorState) -> Command[Literal["OracleAgent", "Elasti
     )
 
 def callOracleAgent(state: SupervisorState) -> Command[Literal['supervisor']]:
-    prompt = state['user_question']
-    customer_id_ref = state['customer_id_ref']
-    response = OracleAgent.graph.invoke({"messages":[HumanMessage(content=json.dumps({
+    try:
+        prompt = state['user_question']
+        customer_id_ref = state['customer_id_ref']
+        response = OracleAgent.graph.invoke({"messages":[HumanMessage(content=json.dumps({
             "user_question": prompt,
             "db_config": DB_CONFIG_ORACLE,
             "customer_id_reference": customer_id_ref,
         }))], "db_config": DB_CONFIG_ORACLE, "user_question" : prompt, "customer_id_reference": customer_id_ref, "fallback_elastic": False})
-    return Command(
-        goto=END,
-        update={"messages": response['messages'][-1]}
-    )
+        return Command(
+            goto=END,
+            update={"messages": response['messages'][-1]}
+        )
+    except Exception as e:
+        return Command(
+            update={"messages": AIMessage(content="Mohon maaf, pertanyaan Anda di luar cakupan layanan kami. Silakan ajukan pertanyaan terkait produk, pesanan, faktur, atau stok, dan terbatas pada riwayat pembelian Anda sendiri. Kami tidak dapat menanggapi pertanyaan seputar privasi pelanggan lain, isu kriminal, penyalahgunaan obat, atau topik yang tidak relevan dengan layanan kami.")},
+            goto=END
+        )
 
 def callElasticAgent(state: SupervisorState) -> Command[Literal['supervisor']]:
-    prompt = state['user_question']
-    response = ElasticAgent.graph.invoke({"messages":HumanMessage(content=prompt)})
-    return Command(
-        goto=END,
-        update={"messages": response['messages'][-1]}
-    )
+    try:
+        prompt = state['user_question']
+        response = ElasticAgent.graph.invoke({"messages":HumanMessage(content=prompt)})
+        return Command(
+            goto=END,
+            update={"messages": response['messages'][-1]}
+        )
+    except Exception as e:
+        return Command(
+            update={"messages": AIMessage(content="Mohon maaf, pertanyaan Anda di luar cakupan layanan kami. Silakan ajukan pertanyaan terkait produk, pesanan, faktur, atau stok, dan terbatas pada riwayat pembelian Anda sendiri. Kami tidak dapat menanggapi pertanyaan seputar privasi pelanggan lain, isu kriminal, penyalahgunaan obat, atau topik yang tidak relevan dengan layanan kami.")},
+            goto=END
+        )
 
 def callMilvusAgent(state: SupervisorState) -> Command[Literal['supervisor']]:
-    prompt = state['user_question']
-    response = MilvusAgent.graph.invoke({"messages":HumanMessage(content=prompt)})
-    return Command(
-        goto=END,
-        update={"messages": response['messages'][-1]}
-    )
+    try:
+        prompt = state['user_question']
+        response = MilvusAgent.graph.invoke({"messages":HumanMessage(content=prompt)})
+        return Command(
+            goto=END,
+            update={"messages": response['messages'][-1]}
+        )
+    except Exception as e:
+        return Command(
+            update={"messages": AIMessage(content="Mohon maaf, pertanyaan Anda di luar cakupan layanan kami. Silakan ajukan pertanyaan terkait produk, pesanan, faktur, atau stok, dan terbatas pada riwayat pembelian Anda sendiri. Kami tidak dapat menanggapi pertanyaan seputar privasi pelanggan lain, isu kriminal, penyalahgunaan obat, atau topik yang tidak relevan dengan layanan kami.")},
+            goto=END
+        )
 
 def build_agent():
     memory = InMemorySaver()
