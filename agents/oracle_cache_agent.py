@@ -95,10 +95,14 @@ def query_generator(state: DBGraphState):
                                 # - ✅ Always restrict results to the most recent or relevant row using ROW_NUMBER() or `MAX(CUSTOMER_KEY)`.
                                 # - ✅ Unless the user specifies a specific number of examples they wish to obtain, always limit your query to at most {top_k} results.
                                 # - ✅ Limit the number of returned rows and iterate if multiple results are expected.
+                                # - ✅ Use `ROWNUM <= n` to limit rows.
+                                # - 🚫 NEVER use `FETCH FIRST n ROWS ONLY` — this is **prohibited** and will cause an error.
+                                # - 🚫 DO NOT hallucinate and NEVER truncate field names (e.g., use 'CUSTOMER_GROUP_ID', never 'CUSTOM_GROUP_ID').
 
                                 ====================
                                 ## REFERENCE SCHEMA:
                                 ====================
+                                Use strictly these schemas and column names only.
                                 - `AAM_DWH.DIM_CUSTOMER`
                                 --- CUSTOMER_KEY
                                 --- CUSTOMER_ID_REF
@@ -114,10 +118,14 @@ def query_generator(state: DBGraphState):
                                 --- PRODUCT_DESC_SEARCH
                                 --- UNIT_SEARCH
                                 - `MISDSAAM.AAM_PRODUCT_STOCK_CSO`
+                                - PRODUCT_CODE
+                                - PRODUCT_DESC
+                                - STOCK
                                 - `AAM_DWH.DIM_PRODUCT`
                                 --- PRODUCT_KEY
                                 --- PRODUCT_CODE
                                 --- PRODUCT_DESC
+                                --- HNA
 
                                 These tables are joined based on:
                                 - CUSTOMER_GROUP_ID
@@ -254,9 +262,9 @@ def check_query(state: DBGraphState):
                                 Your task is to carefully check the provided {dialect} SQL query for correctness. Ensure the query will not result in any Oracle error, especially those in the range ORA-00900 to ORA-00999.
                                 Carefully validate and fix any of the following common issues:
 
-                                - Avoid syntax errors (ORA-[error number]) in the {dialect} dialect
-                                - Trailing semicolons (;) that may break the query
-                                - **Invalid characters** — including special symbols like `\`, `--`, `#`, or non-ASCII characters that may break the query.
+                                - ❌ Avoid syntax errors (ORA-[error number]) in the {dialect} dialect
+                                - ❌ Trailing semicolons (;) that may break the query
+                                - ❌ **Invalid characters** — including special symbols like `\`, `--`, `#`, or non-ASCII characters that may break the query.
                                 - `NOT IN (...)` with potential `NULL` values — replace with `NOT EXISTS` if needed.
                                 - Incorrect use of `UNION` (use `UNION ALL` unless duplicates must be removed).
                                 - Use of `BETWEEN` when exclusive range is intended — rewrite for clarity.
@@ -265,7 +273,6 @@ def check_query(state: DBGraphState):
                                 - Function arguments — ensure correct count and types.
                                 - Join conditions — ensure joins are properly defined with valid keys and aliases.
                                 - Only one `WITH` clause is allowed in Oracle — combine multiple CTEs with commas if needed.
-                                - Prefer ROWNUM instead of FETCH FIRST n ROWS ONLY for Oracle compatibility.
 
                                 🛑 **Strictly forbid** any DML or schema-altering statements:
                                 `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `DROP`, `TRUNCATE`, `CREATE`, `ALTER`
@@ -349,8 +356,8 @@ def supervisor_fallback(state: DBGraphState):
         else:
             break
     tool_messages = recent_tool_messages[::-1]
-
-    if fallback_elastic == True or (len(tool_messages) > 1 and len(tool_messages[-1].content) > 1):
+    
+    if fallback_elastic == True or (len(tool_messages) > 0 and len(tool_messages[-1].content) > 0):
         return "final_answer"
     else:
         return "elastic_attempt"

@@ -7,6 +7,7 @@ from langchain_core.messages import AIMessageChunk, HumanMessage, AIMessage, Sys
 import agents.oracle_cache_agent as OracleAgent
 import agents.elasticsearch as ElasticAgent
 import agents.milvus as MilvusAgent
+import agents.ocr as OcrAgent
 from langgraph.graph import MessagesState, StateGraph, START, END
 from langgraph.types import Command
 from typing import Literal
@@ -14,6 +15,7 @@ from pydantic import BaseModel, Field
 from langgraph.checkpoint.memory import InMemorySaver
 from langchain.chat_models import init_chat_model
 import json
+import base64
 
 from dotenv import load_dotenv
 load_dotenv(override=True)
@@ -139,7 +141,7 @@ memory = None
 supervisor_agent = None
 
 if st.session_state["authentication_status"]:
-    authenticator.logout('logout')
+    authenticator.logout('Logout')
     st.title("AAM Customer Service (TeleCSO)")
     st.write(f'Welcome *{st.session_state["name"]}*')
     if st.session_state["name"] in st.session_state["customer_id_ref_mapping"]:
@@ -162,6 +164,8 @@ if st.session_state["authentication_status"]:
 
     if curr_chat_history:
         for chat in curr_chat_history:
+            if chat["file"]:
+                st.image(chat["file"])
             with st.chat_message("human"):
                 st.markdown(chat["question"])
             with st.chat_message("ai"):
@@ -172,11 +176,25 @@ if st.session_state["authentication_status"]:
     if prompt and prompt.text:
         question = ""
         answer = ""
-        with st.chat_message("human"):
-            st.markdown(prompt.text)
-            question = prompt.text
+        
+        uploaded_file = None
+        filename = ""
+        image_base64 = None
+
+        if prompt and prompt["files"]:
+            uploaded_file = prompt["files"][0]
+            st.image(prompt["files"][0])
+            file_bytes = uploaded_file.read()
+            filename = uploaded_file.name
+            image_base64 = base64.b64encode(file_bytes).decode("utf-8")
+
+        if prompt.text:
+            with st.chat_message("human"):
+                st.markdown(prompt.text)
+                question = prompt.text
 
         final_answer = ""
+
         with st.chat_message("ai"):
             status_placeholder = st.empty()
             question_placeholder = st.empty()
@@ -185,8 +203,6 @@ if st.session_state["authentication_status"]:
             state = "Process Start"
 
             prior_state = st.session_state["chat_memory"][customer_id_ref]["memory"]
-            prior_messages = []
-
             # for prior_message in st.session_state["chat_history"][customer_id_ref]:
             #     prior_messages.append(HumanMessage(content=prior_message["question"]))
             #     prior_messages.append(AIMessage(content=prior_message["answer"]))
@@ -195,19 +211,31 @@ if st.session_state["authentication_status"]:
             #     "messages": prior_messages + [HumanMessage(content=prompt.text)],
             #     "customer_id_ref": customer_id_ref
             # }
+            
+            if image_base64:
+                response = OcrAgent.graph.invoke({
+                    "messages": [HumanMessage(content=json.dumps({
+                        "image_base64": image_base64,
+                        "filename": filename
+                    }))]
+                })
+                final_answer = response["messages"][-1].content
+                answer_placeholder.markdown(final_answer)
+            else:
         
-            for chunk, metadata in supervisor_agent.stream({"messages": [HumanMessage(content=prompt.text)], "customer_id_ref": customer_id_ref}, stream_mode="messages", config=config):
-                if metadata['langgraph_node'] != state:
-                    status_placeholder.status(label=metadata['langgraph_node'])
-                    state = metadata['langgraph_node']
-                    final_answer = ""
-                if metadata['langgraph_node'] == "generate_elastic_code" or metadata['langgraph_node'] == 'generate_similar_product' or metadata['langgraph_node'] == 'final_answer' or metadata['langgraph_node'] == 'query_or_respond_similar_product':
-                    final_answer += chunk.content
-                    answer_placeholder.markdown(final_answer)
+                for chunk, metadata in supervisor_agent.stream({"messages": [HumanMessage(content=prompt.text)], "customer_id_ref": customer_id_ref}, stream_mode="messages", config=config):
+                    if metadata['langgraph_node'] != state:
+                        status_placeholder.status(label=metadata['langgraph_node'])
+                        state = metadata['langgraph_node']
+                        final_answer = ""
+                    if metadata['langgraph_node'] == "generate_elastic_code" or metadata['langgraph_node'] == 'generate_similar_product' or metadata['langgraph_node'] == 'final_answer' or metadata['langgraph_node'] == 'query_or_respond_similar_product':
+                        final_answer += chunk.content
+                        answer_placeholder.markdown(final_answer)
+        
         answer = final_answer
         status_placeholder.status(label="Complete", state='complete')
         
-        curr_chat_history.append({ "question": question, "answer": answer })
+        curr_chat_history.append({ "question": question, "answer": answer, "file": uploaded_file if uploaded_file else None })
         st.rerun()
 
 elif st.session_state["authentication_status"] == False:
